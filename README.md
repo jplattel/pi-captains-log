@@ -7,18 +7,35 @@ Automatically logs decisions and file changes to `.captains-log` in your project
 ## Features
 
 ### Automatic Logging
-The extension automatically logs entries when:
-- Files are modified (using `write` or `edit` tools)
-- Decisions are made (detected via keywords like "decide", "implement", "create", "fix", etc.)
+The extension automatically logs both user input and model responses:
+- **User prompts** - Summarized at the start of each agent turn
+- **Model responses** - Summarized at the end, including file changes
+- **Manual entries** - Via the `write_captains_log` tool
 
 ### Log Format
 ```
-2026-05-15 [main]: Modified user-auth.ts
-2026-05-15 [feature/auth]: Implemented JWT authentication
-2026-05-15: Fixed login validation bug
+2026-05-15 14:32 [main] ─── Session started ───
+2026-05-15 14:32 [main] #001 User: Add single-line validation
+2026-05-15 14:32 [main] #002 Model: Modified index.ts
+2026-05-15 14:33 [main] #003 User: Fix build errors
+2026-05-15 14:33 [main] #004 Model: Updated tsconfig.json
+2026-05-15 14:34 [feature/auth] #005 Note: Decided to use JWT for authentication
+2026-05-15 14:35 [main] ─── Session ended (4 turns) ───
 ```
 
-When working in a git repository, the branch name is automatically included in brackets.
+**Format breakdown:**
+- `YYYY-MM-DD HH:MM` - Timestamp of the entry
+- `[branch]` - Git branch name (if in a git repository)
+- `#NNN` - Sequential entry number for easy reference
+- `User` - Summarized user input
+- `Model` - Summarized model response or file changes
+- `Note` - Manual log entries
+- `─── Session started/ended ───` - Session boundaries with turn count
+
+**Features:**
+- User prompts are summarized by extracting key actions and removing filler words
+- Trivial exchanges ("thanks", "looks good", etc.) are automatically skipped
+- Entry numbers make it easy to reference specific points in the conversation
 
 ## Usage
 
@@ -53,15 +70,17 @@ read_captains_log({ days: 7, keyword: "authentication" })
 
 ### Tool: `write_captains_log`
 
-The LLM can explicitly write entries to the log.
+The LLM can explicitly write manual entries to the log.
 
 **Parameters:**
-- `entry` (required) - The log entry text to append
+- `entry` (required) - The log entry text to append (single line only, no newlines)
 
 **Example:**
 ```
 write_captains_log({ entry: "Decided to use PostgreSQL for the database layer" })
 ```
+
+Manual entries are logged with the `Note` prefix.
 
 ## Installation
 

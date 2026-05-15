@@ -14,6 +14,38 @@ import { execSync } from "node:child_process";
 const LOG_FILE = ".captains-log";
 
 /**
+ * Track session state
+ */
+let sessionState = {
+	isActive: false,
+	turnCount: 0,
+	entryCount: 0,
+};
+
+/**
+ * Patterns to skip logging (trivial exchanges)
+ */
+const SKIP_PATTERNS = [
+	/^thanks(\s|$)/i,
+	/^thank you/i,
+	/^(looks good|looks great|perfect|great work|awesome|nice)$/i,
+	/^sure(\s|$)/i,
+	/^yes(\s|$)/i,
+	/^no(\s|$)/i,
+	/^ok(\s|$)/i,
+	/^okay(\s|$)/i,
+	/^please(\s|$)/i,
+];
+
+/**
+ * Check if a prompt should be skipped (trivial response)
+ */
+function shouldSkipLogging(prompt: string): boolean {
+	const trimmed = prompt.trim();
+	return SKIP_PATTERNS.some(pattern => pattern.test(trimmed));
+}
+
+/**
  * Get the log file path for the current working directory
  */
 function getLogPath(cwd: string): string {
@@ -54,19 +86,90 @@ function getGitBranch(): string | null {
 }
 
 /**
+ * Format timestamp as HH:MM
+ */
+function formatTime(date: Date): string {
+	return date.toTimeString().split(":").slice(0, 2).join(":");
+}
+
+/**
  * Append a new entry to the log file
  */
-function appendLogEntry(logPath: string, summary: string): void {
-	const date = new Date().toISOString().split("T")[0]; // YYYY-MM-DD
+function appendLogEntry(logPath: string, prefix: string, summary: string): void {
+	const now = new Date();
+	const date = now.toISOString().split("T")[0]; // YYYY-MM-DD
+	const time = formatTime(now); // HH:MM
 	const branch = getGitBranch();
 	const branchSuffix = branch ? ` [${branch}]` : "";
-	const entry = `${date}${branchSuffix}: ${summary}`;
+	const entryNumber = sessionState.entryCount++;
+	const entry = `${date} ${time}${branchSuffix} #${String(entryNumber).padStart(3, '0')} ${prefix}: ${summary}`;
 	
 	try {
 		fs.appendFileSync(logPath, entry + "\n", "utf-8");
 	} catch (error) {
 		console.error("Failed to write captain's log:", error);
 	}
+}
+
+/**
+ * Log session start marker
+ */
+function logSessionStart(logPath: string): void {
+	sessionState.isActive = true;
+	sessionState.turnCount = 0;
+	
+	const date = new Date().toISOString().split("T")[0];
+	const time = formatTime(new Date());
+	const branch = getGitBranch();
+	const branchSuffix = branch ? ` [${branch}]` : "";
+	const entry = `${date} ${time}${branchSuffix} ─── Session started ───`;
+	
+	try {
+		fs.appendFileSync(logPath, entry + "\n", "utf-8");
+	} catch (error) {
+		console.error("Failed to write captain's log:", error);
+	}
+}
+
+/**
+ * Log session end marker (called when session ends)
+ */
+function logSessionEnd(logPath: string): void {
+	if (!sessionState.isActive) return;
+	
+	sessionState.isActive = false;
+	
+	const date = new Date().toISOString().split("T")[0];
+	const time = formatTime(new Date());
+	const branch = getGitBranch();
+	const branchSuffix = branch ? ` [${branch}]` : "";
+	const turnCount = sessionState.turnCount;
+	const entry = `${date} ${time}${branchSuffix} ─── Session ended (${turnCount} turn${turnCount !== 1 ? 's' : ''}) ───`;
+	
+	try {
+		fs.appendFileSync(logPath, entry + "\n", "utf-8");
+	} catch (error) {
+		console.error("Failed to write captain's log:", error);
+	}
+}
+
+/**
+ * Track session lifecycle
+ */
+let sessionTimeout: NodeJS.Timeout | null = null;
+
+/**
+ * Schedule session end after period of inactivity
+ */
+function scheduleSessionEnd(logPath: string): void {
+	if (sessionTimeout) {
+		clearTimeout(sessionTimeout);
+	}
+	
+	sessionTimeout = setTimeout(() => {
+		logSessionEnd(logPath);
+		sessionTimeout = null;
+	}, 30 * 60 * 1000); // 30 minutes of inactivity
 }
 
 /**
@@ -95,17 +198,50 @@ function shouldLog(prompt: string, hasFileChanges: boolean): boolean {
 }
 
 /**
- * Generate a one-line summary from the prompt
+ * Extract key action verbs from prompt
+ */
+function extractAction(prompt: string): string {
+	const actionPatterns = [
+		/(?:add|create|implement|build|make|set up)\s+(?:a|an|the)?\s*([\w\s]{1,30})/i,
+		/(?:update|modify|change|edit|fix|improve)\s+(?:a|an|the)?\s*([\w\s]{1,30})/i,
+		/(?:remove|delete|clear)\s+(?:a|an|the)?\s*([\w\s]{1,30})/i,
+		/(?:check|verify|validate|test|review)\s+(?:a|an|the)?\s*([\w\s]{1,30})/i,
+		/(?:refactor|optimize|clean up)\s+(?:a|an|the)?\s*([\w\s]{1,30})/i,
+	];
+	
+	for (const pattern of actionPatterns) {
+		const match = prompt.match(pattern);
+		if (match && match[1]) {
+			return match[1].trim();
+		}
+	}
+	
+	return "";
+}
+
+/**
+ * Generate a concise one-line summary from the prompt
  */
 function generateSummary(prompt: string): string {
-	// Truncate and clean the prompt
+	// Try to extract key action
+	const action = extractAction(prompt);
+	
+	if (action) {
+		// Capitalize first letter
+		return action.charAt(0).toUpperCase() + action.slice(1);
+	}
+	
+	// Fallback: truncate and clean the prompt
 	let summary = prompt
 		.replace(/\s+/g, " ")
 		.trim();
 	
-	// Limit to 100 characters
-	if (summary.length > 100) {
-		summary = summary.substring(0, 97) + "...";
+	// Remove common filler words
+	summary = summary.replace(/^(can you|could you|please|i need|i want|help me|let's|let us)\s+/i, "");
+	
+	// Limit to 60 characters for brevity
+	if (summary.length > 60) {
+		summary = summary.substring(0, 57) + "...";
 	}
 	
 	// Capitalize first letter
@@ -131,12 +267,20 @@ export default function (pi: ExtensionAPI) {
 		hasDecision: false,
 	};
 	
-	// Reset turn state at the start of each agent turn
-	pi.on("agent_start", async (_event, _ctx) => {
+	// Initialize session on first use
+	pi.on("agent_start", async (_event, ctx) => {
 		turnState = {
 			filesChanged: [],
 			hasDecision: false,
 		};
+		
+		// Log session start at the beginning of the first turn
+		if (!sessionState.isActive) {
+			const logPath = getLogPath(ctx.cwd);
+			logSessionStart(logPath);
+		}
+		
+		sessionState.turnCount++;
 	});
 	
 	// Track file write/edit operations
@@ -149,51 +293,65 @@ export default function (pi: ExtensionAPI) {
 		}
 	});
 	
-	// Track decision-related prompts
+	// Log user input at the start of agent processing
 	pi.on("before_agent_start", async (event, _ctx) => {
+		// Skip trivial exchanges
+		if (shouldSkipLogging(event.prompt)) {
+			return;
+		}
+		
+		const userSummary = generateSummary(event.prompt);
+		const logPath = getLogPath(_ctx.cwd);
+		appendLogEntry(logPath, "User", userSummary);
+		
 		if (shouldLog(event.prompt, turnState.filesChanged.length > 0)) {
 			turnState.hasDecision = true;
 		}
 	});
 	
-	// Log at the end of agent processing (after every prompt)
+	// Log model response at the end of agent processing
 	pi.on("agent_end", async (event, _ctx) => {
-		
-		// Generate summary from the messages in this turn
-		const lastUserMessage = event.messages
-			.filter(m => m.role === "user")
+		// Get the LLM's response (last assistant message)
+		const lastAssistantMessage = event.messages
+			.filter(m => m.role === "assistant")
 			.pop();
 		
-		if (!lastUserMessage) {
+		if (!lastAssistantMessage) {
 			return;
 		}
 		
-		const promptText = Array.isArray(lastUserMessage.content)
-			? lastUserMessage.content
+		const messageText = Array.isArray(lastAssistantMessage.content)
+			? lastAssistantMessage.content
 				.filter((c: any) => c.type === "text")
 				.map((c: any) => c.text)
 				.join(" ")
-			: lastUserMessage.content;
+			: lastAssistantMessage.content;
 		
 		let summary: string;
 		
 		if (turnState.filesChanged.length > 0) {
-			// Summarize file changes
+			// Combine file changes with action summary
 			const files = turnState.filesChanged;
+			
 			if (files.length === 1) {
-				summary = `Modified ${path.basename(files[0])}`;
+				const fileName = path.basename(files[0]);
+				summary = `Modified ${fileName}`;
 			} else if (files.length <= 3) {
-				summary = `Modified ${files.map(f => path.basename(f)).join(", ")}`;
+				const fileNames = files.map(f => path.basename(f)).join(", ");
+				summary = `Modified ${fileNames}`;
 			} else {
 				summary = `Modified ${files.length} files`;
 			}
 		} else {
-			// Summarize decision
-			summary = generateSummary(promptText);
+			// Summarize model response
+			summary = generateSummary(messageText);
 		}
 		
 		const logPath = getLogPath(_ctx.cwd);
-		appendLogEntry(logPath, summary);
+		appendLogEntry(logPath, "Model", summary);
+		
+		// Schedule session end after inactivity
+		scheduleSessionEnd(logPath);
 	});
 	
 	// Register the read_captains_log tool for LLM access
@@ -272,7 +430,7 @@ export default function (pi: ExtensionAPI) {
 			}
 			
 			const logPath = getLogPath(ctx.cwd);
-			appendLogEntry(logPath, entry);
+			appendLogEntry(logPath, "Note", entry);
 			
 			return {
 				content: [{ type: "text", text: "Entry added to captain's log." }],
@@ -394,12 +552,41 @@ class CaptainsLogComponent {
 			);
 
 			for (const entry of visibleEntries) {
-				// Parse date and summary
-				const dateMatch = entry.match(/^(\d{4}-\d{2}-\d{2}): (.+)$/);
-				if (dateMatch) {
-					const date = th.fg("accent", dateMatch[1]);
-					const summary = th.fg("text", dateMatch[2]);
-					lines.push(`  ${date} ${summary}`);
+				// Parse session markers
+				if (entry.includes("─── Session started ───")) {
+					const dateMatch = entry.match(/^(\d{4}-\d{2}-\d{2} \d{2}:\d{2})/);
+					if (dateMatch) {
+						const timestamp = th.fg("accent", dateMatch[1]);
+						lines.push(`  ${timestamp} ${th.fg("info", "─── Session started ───")}`);
+					}
+					continue;
+				}
+				
+				if (entry.includes("─── Session ended")) {
+					const dateMatch = entry.match(/^(\d{4}-\d{2}-\d{2} \d{2}:\d{2})/);
+					if (dateMatch) {
+						const timestamp = th.fg("accent", dateMatch[1]);
+						const turnMatch = entry.match(/(\d+ turn)/);
+						const turnInfo = turnMatch ? th.fg("dim", turnMatch[0]) : "";
+						lines.push(`  ${timestamp} ${th.fg("dim", "─── Session ended")} ${turnInfo} ${th.fg("dim", "───")}`);
+					}
+					continue;
+				}
+				
+				// Parse date, time, branch, entry number, prefix and summary
+				const entryMatch = entry.match(/^(\d{4}-\d{2}-\d{2}) (\d{2}:\d{2})(?: \[([^\]]+)\])? #(\d+) (User|Model|Note): (.+)$/);
+				if (entryMatch) {
+					const date = th.fg("accent", entryMatch[1]);
+					const time = th.fg("dim", entryMatch[2]);
+					const branch = entryMatch[3] ? th.fg("dim", `[${entryMatch[3]}]`) : "";
+					const entryNum = th.fg("dim", `#${entryMatch[4]}`);
+					const prefix = entryMatch[5] === "User" 
+						? th.fg("info", "User") 
+						: entryMatch[5] === "Model" 
+							? th.fg("success", "Model") 
+							: th.fg("warning", "Note");
+					const summary = th.fg("text", entryMatch[6]);
+					lines.push(`  ${date} ${time} ${branch ? branch + " " : ""}${entryNum} ${prefix}: ${summary}`);
 				} else {
 					lines.push(th.fg("dim", `  ${entry}`));
 				}
