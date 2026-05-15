@@ -23,6 +23,15 @@ let sessionState = {
 };
 
 /**
+ * Track pending ask_user interactions for decision logging
+ */
+let pendingAskUser: {
+	question?: string;
+	options?: string[];
+	timestamp: number;
+} | null = null;
+
+/**
  * Patterns to skip logging (trivial exchanges)
  */
 const SKIP_PATTERNS = [
@@ -190,7 +199,10 @@ function shouldLog(prompt: string, hasFileChanges: boolean): boolean {
 		"merge", "merged", "deploy", "deployed", "release", "released",
 		"approve", "approved", "reject", "rejected", "confirm", "confirmed",
 		"architecture", "design", "pattern", "strategy", "approach",
-		"final", "finalized", "concluded", "determined", "settled"
+		"final", "finalized", "concluded", "determined", "settled",
+		"let's go with", "lets go with", "go with", "i'll take", "i will take",
+		"i choose", "i pick", "prefer", "preference", "option 1", "option 2",
+		"option 3", "first option", "second option", "third option"
 	];
 	
 	const lowerPrompt = prompt.toLowerCase();
@@ -198,15 +210,17 @@ function shouldLog(prompt: string, hasFileChanges: boolean): boolean {
 }
 
 /**
- * Extract key action verbs from prompt
+ * Extract key action and subject from prompt
  */
 function extractAction(prompt: string): string {
 	const actionPatterns = [
-		/(?:add|create|implement|build|make|set up)\s+(?:a|an|the)?\s*([\w\s]{1,30})/i,
-		/(?:update|modify|change|edit|fix|improve)\s+(?:a|an|the)?\s*([\w\s]{1,30})/i,
-		/(?:remove|delete|clear)\s+(?:a|an|the)?\s*([\w\s]{1,30})/i,
-		/(?:check|verify|validate|test|review)\s+(?:a|an|the)?\s*([\w\s]{1,30})/i,
-		/(?:refactor|optimize|clean up)\s+(?:a|an|the)?\s*([\w\s]{1,30})/i,
+		/(?:add|create|implement|build|make|set up|initialize|init)\s+(?:a|an|the)?\s*([\w\s\.\-]{5,50})/i,
+		/(?:update|modify|change|edit|fix|improve|enhance)\s+(?:a|an|the)?\s*([\w\s\.\-]{5,50})/i,
+		/(?:remove|delete|clear|eliminate)\s+(?:a|an|the)?\s*([\w\s\.\-]{5,50})/i,
+		/(?:check|verify|validate|test|review|inspect|examine)\s+(?:a|an|the)?\s*([\w\s\.\-]{5,50})/i,
+		/(?:refactor|optimize|clean up|restructure|reorganize)\s+(?:a|an|the)?\s*([\w\s\.\-]{5,50})/i,
+		/(?:read|show|display|list|get|fetch|retrieve)\s+(?:a|an|the)?\s*([\w\s\.\-]{5,50})/i,
+		/(?:write|save|store|record|log)\s+(?:a|an|the)?\s*([\w\s\.\-]{5,50})/i,
 	];
 	
 	for (const pattern of actionPatterns) {
@@ -220,32 +234,97 @@ function extractAction(prompt: string): string {
 }
 
 /**
+ * Detect explicit decision statements in user input
+ * Returns the decision content if found, null otherwise
+ */
+function extractDecision(prompt: string): string | null {
+	const decisionPatterns = [
+		/(?:let's|lets)\s+(?:go with|choose|pick|select|use|take)\s+(.+)/i,
+		/(?:i'll|i will)\s+(?:go with|choose|pick|select|use|take)\s+(.+)/i,
+		/(?:i choose|i pick|i select|i want|i prefer)\s+(.+)/i,
+		/(?:go with|choose|pick|select|use|take)\s+(?:option\s*)?([12345]|one|two|three|four|five|first|second|third|fourth|fifth)/i,
+		/(?:my decision is|decided on|decided to|going with)\s+(.+)/i,
+		/(?:yes|do it|proceed|go ahead)[,.!?]?\s*(.+)/i,
+	];
+	
+	for (const pattern of decisionPatterns) {
+		const match = prompt.match(pattern);
+		if (match && match[1]) {
+			const decision = match[1].trim();
+			// Skip if it's just a trivial response
+			if (decision.length > 2 && !/^(it|that|this|sure|ok|yes|no)$/i.test(decision)) {
+				return decision;
+			}
+		}
+	}
+	
+	return null;
+}
+
+/**
  * Generate a concise one-line summary from the prompt
  */
 function generateSummary(prompt: string): string {
-	// Try to extract key action
+	// Check if this is an explicit decision statement
+	const decision = extractDecision(prompt);
+	if (decision) {
+		// Capitalize first letter and limit length
+		let summary = decision.charAt(0).toUpperCase() + decision.slice(1);
+		if (summary.length > 80) {
+			const cutIndex = summary.lastIndexOf(" ", 77);
+			summary = cutIndex > 40 ? summary.substring(0, cutIndex) + "..." : summary.substring(0, 77) + "...";
+		}
+		return summary;
+	}
+	
+	// Try to extract key action with subject
 	const action = extractAction(prompt);
 	
-	if (action) {
+	if (action && action.length >= 5) {
 		// Capitalize first letter
 		return action.charAt(0).toUpperCase() + action.slice(1);
 	}
 	
-	// Fallback: truncate and clean the prompt
+	// Fallback: create a meaningful summary from the prompt
 	let summary = prompt
 		.replace(/\s+/g, " ")
 		.trim();
 	
-	// Remove common filler words
-	summary = summary.replace(/^(can you|could you|please|i need|i want|help me|let's|let us)\s+/i, "");
+	// Remove common filler words at the start
+	summary = summary.replace(/^(can you|could you|please|i need|i want|help me|let's|let us|would you|will you)\s+/i, "");
 	
-	// Limit to 60 characters for brevity
-	if (summary.length > 60) {
-		summary = summary.substring(0, 57) + "...";
+	// Remove question marks and trailing punctuation for cleaner summary
+	summary = summary.replace(/[?]+$/, "").trim();
+	
+	// If still too short, it's likely a fragment - try to preserve more context
+	if (summary.length < 10) {
+		// Return original prompt with minimal cleaning
+		summary = prompt.replace(/\s+/g, " ").trim();
+	}
+	
+	// Limit to 80 characters for readability (more generous than before)
+	if (summary.length > 80) {
+		// Try to cut at a word boundary
+		const cutIndex = summary.lastIndexOf(" ", 77);
+		if (cutIndex > 40) {
+			summary = summary.substring(0, cutIndex) + "...";
+		} else {
+			summary = summary.substring(0, 77) + "...";
+		}
 	}
 	
 	// Capitalize first letter
 	if (summary.length > 0) {
+		summary = summary.charAt(0).toUpperCase() + summary.slice(1);
+	}
+	
+	// Ensure minimum meaningful length (avoid single words)
+	if (summary.length < 5 && prompt.length >= 5) {
+		// Use more of the original prompt
+		summary = prompt.replace(/\s+/g, " ").trim();
+		if (summary.length > 80) {
+			summary = summary.substring(0, 77) + "...";
+		}
 		summary = summary.charAt(0).toUpperCase() + summary.slice(1);
 	}
 	
@@ -290,6 +369,42 @@ export default function (pi: ExtensionAPI) {
 		}
 		if (event.toolName === "edit" && "path" in event.input) {
 			turnState.filesChanged.push(event.input.path as string);
+		}
+		
+		// Track ask_user tool calls for decision logging
+		if (event.toolName === "ask_user") {
+			pendingAskUser = {
+				question: event.input.question as string | undefined,
+				options: (event.input.options as any[] | undefined)?.map(opt => 
+					typeof opt === "string" ? opt : opt.title
+				),
+				timestamp: Date.now(),
+			};
+		}
+	});
+	
+	// Track ask_user tool results to log decisions
+	pi.on("tool_result", async (event, _ctx) => {
+		if (event.toolName === "ask_user" && pendingAskUser && pendingAskUser.question) {
+			const result = event.result as any;
+			if (result && result.content) {
+				// Extract the user's selection from the result
+				const content = Array.isArray(result.content) 
+					? result.content.find((c: any) => c.type === "text")?.text 
+					: result.content;
+				
+				if (content && typeof content === "string") {
+					// Parse the selection from the tool result
+					const selectionMatch = content.match(/Selected?:?\s*(.+)/i);
+					const selection = selectionMatch ? selectionMatch[1].trim() : content.trim();
+					
+					if (selection && selection !== "null") {
+						const logPath = getLogPath(_ctx.cwd);
+						appendLogEntry(logPath, "Decision", selection);
+					}
+				}
+			}
+			pendingAskUser = null;
 		}
 	});
 	
@@ -574,7 +689,7 @@ class CaptainsLogComponent {
 				}
 				
 				// Parse date, time, branch, entry number, prefix and summary
-				const entryMatch = entry.match(/^(\d{4}-\d{2}-\d{2}) (\d{2}:\d{2})(?: \[([^\]]+)\])? #(\d+) (User|Model|Note): (.+)$/);
+				const entryMatch = entry.match(/^(\d{4}-\d{2}-\d{2}) (\d{2}:\d{2})(?: \[([^\]]+)\])? #(\d+) (User|Model|Note|Decision): (.+)$/);
 				if (entryMatch) {
 					const date = th.fg("accent", entryMatch[1]);
 					const time = th.fg("dim", entryMatch[2]);
@@ -584,7 +699,9 @@ class CaptainsLogComponent {
 						? th.fg("info", "User") 
 						: entryMatch[5] === "Model" 
 							? th.fg("success", "Model") 
-							: th.fg("warning", "Note");
+							: entryMatch[5] === "Decision"
+								? th.fg("accent", "Decision")
+								: th.fg("warning", "Note");
 					const summary = th.fg("text", entryMatch[6]);
 					lines.push(`  ${date} ${time} ${branch ? branch + " " : ""}${entryNum} ${prefix}: ${summary}`);
 				} else {
