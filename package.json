@@ -1,0 +1,36 @@
+{
+  "name": "pi-captains-log",
+  "version": "1.0.0",
+  "description": "Automatically log decisions and file changes to a captain's log in your projects",
+  "keywords": [
+    "pi-package",
+    "pi-extension",
+    "captains-log",
+    "productivity"
+  ],
+  "author": "Joost Plattel",
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "prepublishOnly": "npm run build",
+    "test": "echo \"No tests specified\" && exit 0"
+  },
+  "pi": {
+    "extensions": ["./dist/index.js"]
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "typebox": "*"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.0.0"
+  }
+}

@@ -5,7 +5,7 @@
  * Provides a command and tool to review past entries
  */
 
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -150,14 +150,14 @@ export default function (pi: ExtensionAPI) {
 	});
 	
 	// Track decision-related prompts
-	pi.on("before_agent_start", async (event, ctx) => {
+	pi.on("before_agent_start", async (event, _ctx) => {
 		if (shouldLog(event.prompt, turnState.filesChanged.length > 0)) {
 			turnState.hasDecision = true;
 		}
 	});
 	
 	// Log at the end of agent processing (after every prompt)
-	pi.on("agent_end", async (event, ctx) => {
+	pi.on("agent_end", async (event, _ctx) => {
 		
 		// Generate summary from the messages in this turn
 		const lastUserMessage = event.messages
@@ -168,10 +168,12 @@ export default function (pi: ExtensionAPI) {
 			return;
 		}
 		
-		const promptText = lastUserMessage.content
-			.filter(c => c.type === "text")
-			.map(c => c.text)
-			.join(" ");
+		const promptText = Array.isArray(lastUserMessage.content)
+			? lastUserMessage.content
+				.filter((c: any) => c.type === "text")
+				.map((c: any) => c.text)
+				.join(" ")
+			: lastUserMessage.content;
 		
 		let summary: string;
 		
@@ -190,7 +192,7 @@ export default function (pi: ExtensionAPI) {
 			summary = generateSummary(promptText);
 		}
 		
-		const logPath = getLogPath(ctx.cwd);
+		const logPath = getLogPath(_ctx.cwd);
 		appendLogEntry(logPath, summary);
 	});
 	
@@ -236,7 +238,7 @@ export default function (pi: ExtensionAPI) {
 			}
 			
 			// Apply limit
-			entries = entries.slice(-params.limit);
+			entries = entries.slice(-(params.limit ?? 10));
 			
 			const content = entries.length > 0
 				? entries.join("\n")
@@ -253,15 +255,24 @@ export default function (pi: ExtensionAPI) {
 	pi.registerTool({
 		name: "write_captains_log",
 		label: "Write Captain's Log",
-		description: "Write a new entry to the captain's log to record decisions, changes, or important notes",
+		description: "Write a new entry to the captain's log to record decisions, changes, or important notes. Entry must be a single line (no newlines).",
 		parameters: Type.Object({
 			entry: Type.String({ 
-				description: "The log entry text to append",
+				description: "The log entry text to append (single line only, no newlines)",
 			}),
 		}),
 		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+			// Validate entry is a single line
+			const entry = params.entry.trim();
+			if (entry.includes("\n")) {
+				return {
+					content: [{ type: "text", text: "Error: Log entry must be a single line. Remove newlines and try again." }],
+					details: { success: false, error: "multiline_entry" },
+				};
+			}
+			
 			const logPath = getLogPath(ctx.cwd);
-			appendLogEntry(logPath, params.entry);
+			appendLogEntry(logPath, entry);
 			
 			return {
 				content: [{ type: "text", text: "Entry added to captain's log." }],

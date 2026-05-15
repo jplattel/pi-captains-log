@@ -1,6 +1,8 @@
-# Captain's Log Extension
+# Captain's Log Extension for Pi
 
-Automatically logs decisions and file changes to `.captains-log` in your project root.
+[![npm version](https://badge.fury.io/js/pi-captains-log.svg)](https://www.npmjs.com/package/pi-captains-log)
+
+Automatically logs decisions and file changes to `.captains-log` in your project root. A pi coding agent extension that helps you track what happened in each session.
 
 ## Features
 
@@ -11,10 +13,12 @@ The extension automatically logs entries when:
 
 ### Log Format
 ```
-2026-05-15: Modified user-auth.ts
-2026-05-15: Implemented JWT authentication
+2026-05-15 [main]: Modified user-auth.ts
+2026-05-15 [feature/auth]: Implemented JWT authentication
 2026-05-15: Fixed login validation bug
 ```
+
+When working in a git repository, the branch name is automatically included in brackets.
 
 ## Usage
 
@@ -61,12 +65,33 @@ write_captains_log({ entry: "Decided to use PostgreSQL for the database layer" }
 
 ## Installation
 
-The extension is located at:
+### From npm (Recommended)
+
+```bash
+pi install npm:pi-captains-log
+```
+
+### From Source
+
+Clone this repository and install locally:
+
+```bash
+git clone https://github.com/YOUR_USERNAME/pi-captains-log.git
+cd pi-captains-log
+npm install
+npm run build
+pi install ./path/to/pi-captains-log
+```
+
+### Manual Installation
+
+Copy the extension to your pi extensions directory:
+
 ```
 ~/.pi/agent/extensions/captains-log/index.ts
 ```
 
-It will be auto-loaded by pi on startup. To reload after changes:
+After installation, reload pi extensions:
 ```
 /reload
 ```
@@ -74,3 +99,9 @@ It will be auto-loaded by pi on startup. To reload after changes:
 ## Log File
 
 The log file (`.captains-log`) is created in the project root (current working directory) when the first entry is logged. Each project has its own log file.
+
+The `.captains-log` file is typically added to `.gitignore` as it contains local development history.
+
+## License
+
+MIT
