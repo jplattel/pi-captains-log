@@ -376,32 +376,41 @@ export default function (pi: ExtensionAPI) {
 			pendingAskUser = {
 				question: event.input.question as string | undefined,
 				options: (event.input.options as any[] | undefined)?.map(opt => 
-					typeof opt === "string" ? opt : opt.title
+					typeof opt === "string" ? opt : (opt as any).title
 				),
 				timestamp: Date.now(),
 			};
+			// Log that we're waiting for a decision
+			const logPath = getLogPath(_ctx.cwd);
+			appendLogEntry(logPath, "Decision Pending", event.input.question as string || "User question");
 		}
 	});
 	
 	// Track ask_user tool results to log decisions
-	pi.on("tool_result", async (event, _ctx) => {
-		if (event.toolName === "ask_user" && pendingAskUser && pendingAskUser.question) {
-			const result = event.result as any;
-			if (result && result.content) {
-				// Extract the user's selection from the result
-				const content = Array.isArray(result.content) 
-					? result.content.find((c: any) => c.type === "text")?.text 
-					: result.content;
+	pi.on("tool_result", async (event, ctx) => {
+		if (event.toolName === "ask_user" && pendingAskUser) {
+			// Extract the user's selection from the tool result content
+			let content: string | undefined;
+			
+			if (Array.isArray(event.content)) {
+				const textContent = event.content.find((c): c is { type: "text"; text: string } => 
+					c.type === "text" && "text" in c
+				);
+				if (textContent) {
+					content = textContent.text;
+				}
+			} else if (typeof event.content === "string") {
+				content = event.content;
+			}
+			
+			if (content && content.length > 0 && content !== "null") {
+				// Clean up the content - remove common prefixes
+				let selection = content.trim();
+				selection = selection.replace(/^(User answered:|Selected:|Answer:|Response:)\s*/i, "").trim();
 				
-				if (content && typeof content === "string") {
-					// Parse the selection from the tool result
-					const selectionMatch = content.match(/Selected?:?\s*(.+)/i);
-					const selection = selectionMatch ? selectionMatch[1].trim() : content.trim();
-					
-					if (selection && selection !== "null") {
-						const logPath = getLogPath(_ctx.cwd);
-						appendLogEntry(logPath, "Decision", selection);
-					}
+				if (selection.length > 0) {
+					const logPath = getLogPath(ctx.cwd);
+					appendLogEntry(logPath, "Decision", selection);
 				}
 			}
 			pendingAskUser = null;
