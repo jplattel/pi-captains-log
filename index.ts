@@ -111,7 +111,9 @@ function appendLogEntry(logPath: string, prefix: string, summary: string): void 
 	const branch = getGitBranch();
 	const branchSuffix = branch ? ` [${branch}]` : "";
 	const entryNumber = sessionState.entryCount++;
-	const entry = `${date} ${time}${branchSuffix} #${String(entryNumber).padStart(3, '0')} ${prefix}: ${summary}`;
+	// Strip newlines and collapse whitespace to ensure single-line entries
+	const cleanSummary = summary.replace(/[\r\n]+/g, " ").replace(/\s+/g, " ").trim();
+	const entry = `${date} ${time}${branchSuffix} #${String(entryNumber).padStart(3, '0')} ${prefix}: ${cleanSummary}`;
 	
 	try {
 		fs.appendFileSync(logPath, entry + "\n", "utf-8");
